@@ -106,16 +106,26 @@ const runScan = (input: ScannerTestInput) =>
     return yield* scanner.scan;
   }).pipe(Effect.provide(makeScannerTestLayer(input)));
 
-const runRecentThreadOutcomes = (input: ScannerTestInput & { readonly workspaceRoot: string }) =>
+const runRecentThreadOutcomes = (
+  input: ScannerTestInput & {
+    readonly workspaceRoot: string;
+    readonly historyWindowMs?: number | null;
+  },
+) =>
   Effect.gen(function* () {
     const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-    return yield* scanner.recentThreads(input.workspaceRoot).pipe(
+    return yield* scanner.recentThreads(input.workspaceRoot, [], input.historyWindowMs).pipe(
       Stream.runCollect,
       Effect.map((outcomes) => Array.from(outcomes)),
     );
   }).pipe(Effect.provide(makeScannerTestLayer(input)));
 
-const runRecentThreads = (input: ScannerTestInput & { readonly workspaceRoot: string }) =>
+const runRecentThreads = (
+  input: ScannerTestInput & {
+    readonly workspaceRoot: string;
+    readonly historyWindowMs?: number | null;
+  },
+) =>
   runRecentThreadOutcomes(input).pipe(
     Effect.map((outcomes) =>
       outcomes.flatMap((outcome) => (outcome._tag === "Importable" ? [outcome.thread] : [])),
@@ -1505,6 +1515,54 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ["Review this code", "Looks good"],
           ["Fix the project", "Done"],
         ]);
+      }),
+    );
+
+    it.effect.each([
+      { historyWindowMs: undefined, expected: ["claude-recent"], label: "the default window" },
+      { historyWindowMs: null, expected: ["claude-recent", "claude-old"], label: "no window" },
+      {
+        historyWindowMs: 60 * 24 * 60 * 60 * 1000,
+        expected: ["claude-recent", "claude-old"],
+        label: "a window that reaches the older session",
+      },
+    ])("reads history as far back as $label asks", ({ historyWindowMs, expected }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        const claudeTranscript = (sessionId: string) =>
+          `${JSON.stringify({
+            type: "user",
+            cwd: workspace,
+            sessionId,
+            timestamp: "2026-08-23T12:00:00.000Z",
+            message: { role: "user", content: "Fix the project" },
+          })}\n`;
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-selected", "claude-recent.jsonl"),
+          contents: claudeTranscript("claude-recent"),
+          mtimeMs: nowMs - 24 * 60 * 60 * 1000,
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-selected", "claude-old.jsonl"),
+          contents: claudeTranscript("claude-old"),
+          mtimeMs: nowMs - 31 * 24 * 60 * 60 * 1000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+          ...(historyWindowMs === undefined ? {} : { historyWindowMs }),
+        });
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual(expected);
       }),
     );
 

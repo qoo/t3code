@@ -184,12 +184,16 @@ const runImport = (input: {
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly snapshots: ReturnType<typeof makeSnapshotsLayer>;
   readonly expectedWorkspaceRoot?: string;
+  readonly historyWindowDays?: number | null;
 }) =>
   importRecentAgentThreads({
     projectId: PROJECT_ID,
     ...(input.expectedWorkspaceRoot === undefined
       ? {}
       : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
+    ...(input.historyWindowDays === undefined
+      ? {}
+      : { historyWindowDays: input.historyWindowDays }),
   }).pipe(
     Effect.provideService(AgentSessionScanner.AgentSessionScanner, input.scanner),
     Effect.provideService(OrchestrationEngine.OrchestrationEngineService, input.engine),
@@ -315,6 +319,47 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
 
         expect(error).toEqual(new AgentSessionImportProjectChangedError({ projectId: PROJECT_ID }));
         expect(recentThreads).not.toHaveBeenCalled();
+      }),
+    );
+
+    it.effect.each([
+      { historyWindowDays: undefined, expected: undefined, label: "the scanner default" },
+      { historyWindowDays: null, expected: null, label: "the whole history" },
+      { historyWindowDays: 60, expected: 60 * 24 * 60 * 60 * 1000, label: "a day count" },
+    ])("asks the scanner for $label", ({ historyWindowDays, expected }) =>
+      Effect.gen(function* () {
+        const recentThreads = vi.fn<
+          AgentSessionScanner.AgentSessionScanner["Service"]["recentThreads"]
+        >(() => Stream.empty);
+
+        const result = yield* runImport({
+          scanner: AgentSessionScanner.AgentSessionScanner.of({
+            scan: Effect.die("unused"),
+            recentThreads,
+          }),
+          engine: OrchestrationEngine.OrchestrationEngineService.of({
+            dispatch: () => Effect.die("must not dispatch without importable history"),
+            readEvents: () => Stream.empty,
+            readThreadEvents: () => Stream.empty,
+            getThreadReplayStats: () => Effect.die("unused"),
+            streamDomainEvents: Stream.empty,
+            subscribeDomainEvents: Effect.succeed(Stream.empty),
+            latestSequence: Effect.succeed(0),
+          }),
+          directory: ProviderSessionDirectory.ProviderSessionDirectory.of({
+            upsert: () => Effect.die("unused"),
+            getProvider: () => Effect.die("unused"),
+            recordImportedTranscript: () => Effect.die("unused"),
+            getBinding: () => Effect.die("unused"),
+            listThreadIds: () => Effect.die("unused"),
+            listBindings: () => Effect.die("unused"),
+          }),
+          snapshots: makeSnapshotsLayer({ project: makeProject() }),
+          ...(historyWindowDays === undefined ? {} : { historyWindowDays }),
+        });
+
+        expect(result).toEqual({ importedCount: 0, skippedCount: 0 });
+        expect(recentThreads.mock.calls[0]?.[2]).toBe(expected);
       }),
     );
 

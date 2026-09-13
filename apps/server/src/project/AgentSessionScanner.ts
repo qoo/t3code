@@ -82,7 +82,12 @@ const MAX_METADATA_BYTES_PER_SOURCE = 64 * 1024 * 1024;
 const MAX_METADATA_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
 const MAX_METADATA_RECORDS_PER_SOURCE = 100_000;
 const MAX_METADATA_RECORDS_PER_TRANSCRIPT = 1_000;
-const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * How far back `recentThreads` looks when the caller does not say. Onboarding
+ * imports what a user was working on lately; older history is opt-in because a
+ * long-lived home can hold years of transcripts.
+ */
+const DEFAULT_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Large tool results (especially screenshots) can make an otherwise ordinary
  * Codex transcript several GiB. Streaming field selection avoids allocating
@@ -192,6 +197,11 @@ export class AgentSessionScanner extends Context.Service<
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      /**
+       * How far back to accept transcripts. Defaults to the recent window;
+       * `null` accepts every transcript the scan found for the directory.
+       */
+      historyWindowMs?: number | null,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -1328,13 +1338,14 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    historyWindowMs: number | null,
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
     if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
     const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
+    const cutoffMs = historyWindowMs === null ? Number.NEGATIVE_INFINITY : nowMs - historyWindowMs;
 
     const candidates = cachedCandidates ?? (yield* collectCandidates()).candidates;
     cachedCandidates = candidates;
@@ -1487,7 +1498,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    historyWindowMs = DEFAULT_HISTORY_WINDOW_MS,
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, historyWindowMs));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });

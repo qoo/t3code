@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
@@ -76,6 +82,13 @@ export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 export const AgentSessionImportInput = Schema.Struct({
   projectId: ProjectId,
   expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * How far back to accept transcripts, in days. Absent keeps the default
+   * recent window that onboarding uses; `null` accepts every transcript the
+   * scan reported, which is how a client offers "import all history" for a
+   * directory whose sessions predate that window.
+   */
+  historyWindowDays: Schema.optional(Schema.NullOr(PositiveInt)),
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 

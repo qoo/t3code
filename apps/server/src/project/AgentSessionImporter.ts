@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -131,6 +132,11 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
   const threads = scanner.recentThreads(
     workspaceRoot,
     completedSources.map((entry) => entry.source),
+    // `undefined` leaves the scanner's default window in place; `null` asks for
+    // every transcript the scan found, however old.
+    input.historyWindowDays == null
+      ? input.historyWindowDays
+      : Duration.toMillis(Duration.days(input.historyWindowDays)),
   );
   const importedThreadIds = new Set<ThreadId>();
   let importedCount = 0;
