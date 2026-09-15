@@ -131,7 +131,9 @@ const makeProjectedThread = (input: {
     createdAt: sourceThread.createdAt,
     updatedAt: sourceThread.updatedAt,
     archivedAt: null,
-    settledOverride: null,
+    // The projector settles a thread the importer created, so a snapshot in the
+    // read model always carries the override.
+    settledOverride: input.imported ? "settled" : null,
     settledAt: null,
     deletedAt: null,
     messages: input.imported
@@ -580,6 +582,161 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         });
 
         expect(result).toEqual({ importedCount: 0, skippedCount: 2 });
+        expect(commands).toHaveLength(0);
+      }),
+    );
+
+    it.effect("refiles a snapshot of a session that moved to this project", () =>
+      Effect.gen(function* () {
+        const commands: Array<OrchestrationCommand> = [];
+        const bindings: Array<{
+          readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
+          readonly onConflict: string | undefined;
+        }> = [];
+        let deleted = false;
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () => Stream.fromIterable([makeThreadOutcome(makeThread("codex"))]),
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: (command) => {
+            commands.push(command);
+            if (command.type === "thread.delete") deleted = true;
+            return Effect.succeed({ sequence: commands.length });
+          },
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(0),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: (binding, options) => {
+            bindings.push({ binding, onConflict: options?.onConflict });
+            return Effect.void;
+          },
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.void,
+          getBinding: () =>
+            Effect.succeed(
+              Option.some({
+                threadId: ThreadId.make("import:codex:codex-session"),
+                provider: ProviderDriverKind.make("codex"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "stopped" as const,
+                resumeCursor: { threadId: "codex-session" },
+              }),
+            ),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+
+        const result = yield* runImport({
+          scanner,
+          engine,
+          directory,
+          snapshots: makeSnapshotsLayer({
+            project: makeProject(),
+            getThread: () =>
+              deleted
+                ? Option.none()
+                : Option.some(
+                    makeProjectedThread({
+                      source: "codex",
+                      imported: true,
+                      projectId: ProjectId.make("project-other"),
+                    }),
+                  ),
+          }),
+        });
+
+        expect(result).toEqual({ importedCount: 1, skippedCount: 0 });
+        expect(commands.map((command) => command.type)).toEqual([
+          "thread.delete",
+          "thread.create",
+          "thread.history.import",
+        ]);
+        const created = commands.find((command) => command.type === "thread.create");
+        expect(created?.type === "thread.create" ? created.projectId : undefined).toBe(PROJECT_ID);
+        // The cursor has to resume where the session now lives, not where it began.
+        expect(bindings).toEqual([
+          {
+            binding: expect.objectContaining({ runtimePayload: { cwd: WORKSPACE_ROOT } }),
+            onConflict: "update",
+          },
+        ]);
+      }),
+    );
+
+    it.effect.each([
+      {
+        label: "the other project holds the newer transcript",
+        thread: () => ({
+          ...makeProjectedThread({
+            source: "codex",
+            imported: true,
+            projectId: ProjectId.make("project-other"),
+          }),
+          messages: makeProjectedThread({
+            source: "codex",
+            imported: true,
+            projectId: ProjectId.make("project-other"),
+          }).messages.map((message) => ({
+            ...message,
+            createdAt: "2026-08-24T10:05:00.000Z",
+          })),
+        }),
+      },
+      {
+        label: "the thread carries work of its own",
+        thread: () =>
+          makeProjectedThread({
+            source: "codex",
+            imported: true,
+            includeFollowup: true,
+            projectId: ProjectId.make("project-other"),
+          }),
+      },
+    ])("leaves a cross-project thread alone when $label", ({ thread }) =>
+      Effect.gen(function* () {
+        const commands: Array<OrchestrationCommand> = [];
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () => Stream.fromIterable([makeThreadOutcome(makeThread("codex"))]),
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: (command) => {
+            commands.push(command);
+            return Effect.succeed({ sequence: commands.length });
+          },
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(0),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("must not rebind a thread that stays put"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.die("unused"),
+          getBinding: () => Effect.succeed(Option.none()),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+
+        const result = yield* runImport({
+          scanner,
+          engine,
+          directory,
+          snapshots: makeSnapshotsLayer({
+            project: makeProject(),
+            getThread: () => Option.some(thread()),
+          }),
+        });
+
+        expect(result).toEqual({ importedCount: 0, skippedCount: 1 });
         expect(commands).toHaveLength(0);
       }),
     );

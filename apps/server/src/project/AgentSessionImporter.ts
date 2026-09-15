@@ -71,6 +71,18 @@ function hasImportedHistory(thread: OrchestrationThread): boolean {
   return thread.messages.some((message) => isImportedAgentSessionMessageId(message.id));
 }
 
+/**
+ * How far a snapshot reaches, so the newer transcript wins when the same session
+ * appears under two projects. Falls back to the thread timestamp for a snapshot
+ * whose messages were all dropped by the import caps.
+ */
+function lastMomentCovered(thread: {
+  readonly messages: ReadonlyArray<{ readonly createdAt: string }>;
+  readonly updatedAt: string;
+}): string {
+  return thread.messages.at(-1)?.createdAt ?? thread.updatedAt;
+}
+
 function hasImportBlockingActivity(
   thread: OrchestrationThread,
   importedHistoryPresent: boolean,
@@ -176,8 +188,9 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
       const imported = yield* Effect.gen(function* () {
         const provider = ProviderDriverKind.make(thread.source);
         const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
-        const existingThread = yield* snapshots.getThreadDetailById(threadId);
+        let existingThread = yield* snapshots.getThreadDetailById(threadId);
         const existingBinding = yield* directory.getBinding(threadId);
+        let refiled = false;
 
         if (
           thread.source === "claudeAgent" &&
@@ -189,12 +202,31 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           });
         }
 
+        // A session whose directory changed mid-run leaves a transcript under both
+        // projects, and one thread id can only sit in one of them. The project
+        // holding the newer transcript is the one being worked in, so a snapshot
+        // is rebuilt there; a thread carrying work of its own stays where it is.
         if (Option.isSome(existingThread) && existingThread.value.projectId !== input.projectId) {
-          return yield* new AgentSessionThreadProjectConflictError({
+          const snapshotOnly =
+            hasImportedHistory(existingThread.value) &&
+            !hasImportBlockingActivity(existingThread.value, true);
+          if (
+            !snapshotOnly ||
+            lastMomentCovered(thread) <= lastMomentCovered(existingThread.value)
+          ) {
+            return yield* new AgentSessionThreadProjectConflictError({
+              threadId,
+              expectedProjectId: input.projectId,
+              actualProjectId: existingThread.value.projectId,
+            });
+          }
+          yield* engine.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(yield* crypto.randomUUIDv4),
             threadId,
-            expectedProjectId: input.projectId,
-            actualProjectId: existingThread.value.projectId,
           });
+          existingThread = Option.none();
+          refiled = true;
         }
 
         const importedHistoryPresent = Option.isSome(existingThread)
@@ -228,7 +260,10 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         // Install the cursor before the thread becomes visible. A concurrent
         // real session can replace it, while insert-ignore keeps this import
         // from replacing that newer binding.
-        if (Option.isNone(existingBinding)) {
+        // A refiled thread keeps its cursor but has to resume in the directory it
+        // moved to, so its payload is rewritten rather than left pointing at the
+        // project it came from.
+        if (Option.isNone(existingBinding) || refiled) {
           yield* directory.upsert(
             {
               threadId,
@@ -242,7 +277,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
                   : { threadId, resume: thread.providerSessionId },
               runtimePayload: { cwd: workspaceRoot },
             },
-            { onConflict: "ignore" },
+            { onConflict: refiled ? "update" : "ignore" },
           );
         }
 
