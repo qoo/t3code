@@ -11,6 +11,7 @@ packages/*/dist
 .env
 .env.local
 build/
+.gradle/
 .logs/
 release/
 release-mock/
