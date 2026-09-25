@@ -23,6 +23,10 @@ rem defaults this on for --share runs for the same reason; the mode is still
 rem marked experimental upstream, so drop this line if you hit bundler-only bugs.
 set "T3CODE_BUNDLED_DEV=1"
 
+rem Dev windows open detached DevTools by default. Skip it here; Ctrl+Shift+I
+rem (View > Toggle Developer Tools) still opens it on demand.
+set "T3CODE_DESKTOP_NO_DEVTOOLS=1"
+
 where pnpm >nul 2>nul
 if errorlevel 1 (
   echo [dev:desktop] pnpm was not found on PATH.
