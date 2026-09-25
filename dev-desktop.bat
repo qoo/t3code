@@ -8,6 +8,21 @@ title T3 Code - dev:desktop
 
 cd /d "%~dp0"
 
+rem This path runs a production web build, whose third-party-licenses plugin
+rem downloads SPDX license texts with Node's global fetch. undici ignores
+rem HTTP(S)_PROXY unless this is set, so behind a proxy the build dies with
+rem "ConnectTimeoutError" on raw.githubusercontent.com. Harmless with no proxy
+rem configured: it only tells Node to honour the standard proxy variables.
+set "NODE_USE_ENV_PROXY=1"
+
+rem The Electron renderer loads the dev app over the t3code-dev:// protocol.
+rem Unbundled dev issues one request per module, which drowns Chromium's net
+rem stack in ERR_INSUFFICIENT_RESOURCES and fails the app's dynamic import.
+rem Bundled dev collapses that into a few chunks. The dev runner already
+rem defaults this on for --share runs for the same reason; the mode is still
+rem marked experimental upstream, so drop this line if you hit bundler-only bugs.
+set "T3CODE_BUNDLED_DEV=1"
+
 where pnpm >nul 2>nul
 if errorlevel 1 (
   echo [dev:desktop] pnpm was not found on PATH.
@@ -46,8 +61,10 @@ set "DEV_EXIT=%ERRORLEVEL%"
 echo.
 if not "%DEV_EXIT%"=="0" (
   echo [dev:desktop] dev:desktop exited with code %DEV_EXIT%.
-  echo [dev:desktop] If Electron itself failed to launch, repair its runtime with:
-  echo [dev:desktop]   pnpm --filter @t3tools/desktop ensure:electron
+  echo [dev:desktop] If Electron itself failed to launch, reinstall its runtime:
+  echo [dev:desktop]   node node_modules\.pnpm\electron@44.1.0\node_modules\electron\install.js
+  echo [dev:desktop] Prefer that over `ensure:electron`, which unzips with python3
+  echo [dev:desktop] and dies on Windows against the Microsoft Store python stub.
 )
 echo [dev:desktop] Window kept open so you can read the output.
 pause
