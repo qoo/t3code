@@ -195,6 +195,14 @@ function scheduleRestart() {
       .catch(() => undefined)
       .then(async () => {
         await stopApp();
+        // The main-process watch build cleans dist-electron before writing it,
+        // so the first change event can arrive while main.cjs is still missing.
+        await waitForResources({
+          baseDir: desktopDir,
+          files: requiredFiles,
+          tcpHost: devServer.hostname,
+          tcpPort: port,
+        });
         if (!shuttingDown) {
           startApp();
         }
