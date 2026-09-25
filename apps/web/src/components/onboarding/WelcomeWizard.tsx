@@ -83,7 +83,9 @@ import { formatRelativeTime } from "../../timestampFormat";
  * onboarding overhaul spec: connection choice → sign-in/pair (remote paths) →
  * agent setup with inline install terminal → project import → main screen.
  * Every step past the connection gate is skippable; the whole wizard is
- * re-runnable by clearing the flag.
+ * re-runnable by clearing the flag. `importEnvironmentId` opens straight at
+ * the import step for one computer, which is how existing workspaces import
+ * later Claude Code and Codex history.
  */
 
 type WizardStep = "connection" | "agents" | "import";
@@ -95,18 +97,24 @@ const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations m
 
 export function WelcomeWizard({
   localAvailable,
+  importEnvironmentId,
   onDone,
 }: {
   /** Whether this client is authenticated to the server serving the app. */
   readonly localAvailable: boolean;
+  readonly importEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void;
 }) {
   const completeOnboarding = useCompleteOnboarding();
-  const [step, setStep] = useState<WizardStep>("connection");
+  const [step, setStep] = useState<WizardStep>(
+    importEnvironmentId === undefined ? "connection" : "import",
+  );
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const autoSelectedComputers = useRef(new Set<EnvironmentId>());
-  const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>([]);
+  const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
+    importEnvironmentId === undefined ? [] : [importEnvironmentId],
+  );
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
@@ -189,7 +197,7 @@ export function WelcomeWizard({
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
       >
         <WizardHeader
-          title="Set up T3 Code"
+          title={importEnvironmentId === undefined ? "Set up T3 Code" : "Import projects"}
           identity={
             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
@@ -199,15 +207,17 @@ export function WelcomeWizard({
             </div>
           }
         >
-          <WizardSteps
-            steps={ONBOARDING_STAGES}
-            currentStep={stageIndex}
-            isStepDisabled={(index) => isImporting || index >= stageIndex}
-            onStepChange={(index) => {
-              if (isImporting || index > stageIndex) return;
-              setStep(index === 0 ? "connection" : "agents");
-            }}
-          />
+          {importEnvironmentId === undefined ? (
+            <WizardSteps
+              steps={ONBOARDING_STAGES}
+              currentStep={stageIndex}
+              isStepDisabled={(index) => isImporting || index >= stageIndex}
+              onStepChange={(index) => {
+                if (isImporting || index > stageIndex) return;
+                setStep(index === 0 ? "connection" : "agents");
+              }}
+            />
+          ) : null}
         </WizardHeader>
 
         <WizardPanel holdHeight={isLoadingProjects}>

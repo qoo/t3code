@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
@@ -5,8 +6,15 @@ import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
-/** Onboarding overlays the workspace. Visiting /welcome reopens setup. */
+/**
+ * Onboarding overlays the workspace. Visiting /welcome reopens setup, and
+ * `?import=<environmentId>` opens only the project import step.
+ */
 export const Route = createFileRoute("/welcome")({
+  validateSearch: (raw: Record<string, unknown>): { readonly import?: EnvironmentId } =>
+    typeof raw.import === "string" && raw.import.trim()
+      ? { import: EnvironmentId.make(raw.import) }
+      : {},
   beforeLoad: ({ context }) => {
     const { authGateState } = context;
     if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
@@ -18,6 +26,7 @@ export const Route = createFileRoute("/welcome")({
 
 function WelcomeRouteView() {
   const { authGateState } = Route.useRouteContext();
+  const importEnvironmentId = Route.useSearch({ select: (search) => search.import });
   const navigate = useNavigate();
   // The root shell can remount this pending outlet after the location changes.
   // Never reopen setup while the destination route is still loading.
@@ -35,6 +44,7 @@ function WelcomeRouteView() {
       {isWelcomeRoute && !dismissed ? (
         <WelcomeWizard
           localAvailable={localAvailable}
+          importEnvironmentId={importEnvironmentId}
           onDone={(projectRef) => {
             setDismissed(true);
             if (projectRef !== undefined) {

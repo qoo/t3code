@@ -47,6 +47,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitPullRequestArrowIcon,
+  HistoryIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -1417,6 +1418,17 @@ function OpenCommandPaletteDialog(props: {
             await startAddProjectBrowse(environmentId);
           },
         },
+        {
+          kind: "action",
+          value: `action:add-project:${environmentId}:agent-sessions`,
+          searchTerms: ["import", "claude", "claude code", "codex", "sessions", "history"],
+          title: "Claude Code / Codex",
+          description: "Import projects and recent conversations",
+          icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            await navigate({ to: "/welcome", search: { import: environmentId } });
+          },
+        },
       ];
 
       const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
@@ -1490,7 +1502,7 @@ function OpenCommandPaletteDialog(props: {
 
       return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
     },
-    [openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
+    [navigate, openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
   );
 
   const startAddProjectSourceSelection = useCallback(
@@ -1779,6 +1791,9 @@ function OpenCommandPaletteDialog(props: {
       "devops",
       "url",
       "environment",
+      "import",
+      "claude",
+      "codex",
     ],
     title: "Add project",
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,

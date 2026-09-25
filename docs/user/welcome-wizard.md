@@ -77,5 +77,9 @@ with up to 100,000 input records. Run import again to continue a large batch.
 Completed conversations are not imported again. You can continue without the
 remaining history.
 
+To import again later, select **Add project**, choose the computer, then select
+**Claude Code / Codex**. Projects that already exist also get their newer
+conversations.
+
 You can continue without configuring agents or importing projects, or return to an earlier step
 using the setup progress bar. Navigation pauses while an import is running.
