@@ -5029,6 +5029,15 @@ export default function ChatView(props: ChatViewProps) {
       void legendListRef.current?.scrollToEnd?.({ animated });
     });
   }, []);
+  // Sending is not a reason to abandon where the user was reading. Only senders
+  // who are still following the live edge get pinned back to it; once a scroll
+  // gesture has opted out, the scroll-to-bottom pill is how they come back.
+  const scrollToEndIfFollowing = useCallback(() => {
+    if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
+      return;
+    }
+    scrollToEnd();
+  }, [scrollToEnd]);
   const displayedTimelineKeyRef = useRef(displayedTimeline.displayThreadKey);
   useLayoutEffect(() => {
     const displayKey = displayedTimeline.displayThreadKey;
@@ -7276,7 +7285,7 @@ export default function ChatView(props: ChatViewProps) {
         messageId: messageIdForSend,
       });
     } else {
-      scrollToEnd();
+      scrollToEndIfFollowing();
     }
     setOptimisticUserMessages((existing) => [
       ...existing,
@@ -7896,7 +7905,7 @@ export default function ChatView(props: ChatViewProps) {
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
-      scrollToEnd();
+      scrollToEndIfFollowing();
 
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -8002,7 +8011,7 @@ export default function ChatView(props: ChatViewProps) {
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
-      scrollToEnd,
+      scrollToEndIfFollowing,
       setComposerDraftInteractionMode,
       setThreadError,
       startThreadTurn,

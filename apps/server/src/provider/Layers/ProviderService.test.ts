@@ -1833,6 +1833,48 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("persists a Claude session as resumable as soon as the CLI confirms it", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-claude-confirmed");
+      yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const cursor = {
+        threadId,
+        resume: "550e8400-e29b-41d4-a716-446655440030",
+        turnCount: 1,
+        turnStartMessageIds: ["first-prompt"],
+      };
+      routing.claude.updateSession(threadId, (session) => ({ ...session, resumeCursor: cursor }));
+      const started = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === "evt-claude-confirmed"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      routing.claude.emit({
+        type: "thread.started",
+        eventId: asEventId("evt-claude-confirmed"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        payload: { providerThreadId: cursor.resume },
+      });
+      yield* Fiber.join(started);
+
+      // Mid-first-turn: no turn boundary yet, but a restart must resume this session.
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const binding = yield* directory.getBinding(threadId);
+      assert(Option.isSome(binding));
+      assert.deepEqual(binding.value.resumeCursor, cursor);
+    }),
+  );
+
   it.effect("marks a successful fallback compaction as compacted", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

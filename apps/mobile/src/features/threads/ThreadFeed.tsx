@@ -2362,16 +2362,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reportHeaderMaterialVisibility(false);
   }, [feedThreadKey, reportHeaderMaterialVisibility]);
 
-  // A thread switch opens pinned to the end; a send explicitly returns to the
-  // live edge (ThreadDetailScreen scrolls the new message into place). Both
-  // re-arm follow regardless of where the user had scrolled before.
+  // A thread switch opens pinned to the end, re-arming follow regardless of
+  // where the user had scrolled in the thread they left.
   useEffect(() => {
     clearUserScrollSettle();
     userScrollSessionRef.current = false;
     transitionEndFollow({ type: "reset" });
   }, [clearUserScrollSettle, feedThreadKey, transitionEndFollow]);
+  // Sending is not a reason to abandon where the user was reading, so a send
+  // re-arms follow only for senders already at the live edge. Once a scroll
+  // gesture has opted out, the scroll-to-end button is how they come back.
+  // ThreadDetailScreen still scrolls an anchored first message into place.
   useEffect(() => {
-    if (props.submittedMessageId !== null) {
+    if (props.submittedMessageId !== null && endFollowEnabledRef.current) {
       clearUserScrollSettle();
       userScrollSessionRef.current = false;
       transitionEndFollow({ type: "reset" });

@@ -1076,6 +1076,40 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  // Claude's resume cursor changes outside any sendTurn response: when the CLI
+  // first confirms its session and at every turn boundary, including background
+  // turns. Persist it at those moments so a restart resumes the real session.
+  const persistClaudeResumeCursor = (
+    source: {
+      readonly instanceId: ProviderInstanceId;
+      readonly provider: ProviderDriverKind;
+    },
+    threadId: ThreadId,
+  ) =>
+    Effect.gen(function* () {
+      const adapter = yield* registry.getByInstance(source.instanceId);
+      const session = (yield* adapter.listSessions()).find(
+        (session) => session.threadId === threadId,
+      );
+      if (session?.resumeCursor === undefined) {
+        return;
+      }
+      const binding = yield* directory.getBinding(session.threadId);
+      if (Option.isNone(binding) || binding.value.providerInstanceId !== source.instanceId) {
+        return;
+      }
+      yield* directory.upsert({
+        threadId: session.threadId,
+        provider: source.provider,
+        providerInstanceId: source.instanceId,
+        resumeCursor: session.resumeCursor,
+      });
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to persist Claude turn resume state", { cause }),
+      ),
+    );
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -1101,34 +1135,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ) {
         yield* recordTurnCompletedAnalytics(source, canonicalEvent);
         if (source.provider === "claudeAgent") {
-          // Background Claude turns have no sendTurn response to persist their
-          // new native boundary. Save it before clients can checkpoint the turn.
-          yield* Effect.gen(function* () {
-            const adapter = yield* registry.getByInstance(source.instanceId);
-            const session = (yield* adapter.listSessions()).find(
-              (session) => session.threadId === canonicalEvent.threadId,
-            );
-            if (session?.resumeCursor !== undefined) {
-              const binding = yield* directory.getBinding(session.threadId);
-              if (
-                Option.isNone(binding) ||
-                binding.value.providerInstanceId !== source.instanceId
-              ) {
-                return;
-              }
-              yield* directory.upsert({
-                threadId: session.threadId,
-                provider: source.provider,
-                providerInstanceId: source.instanceId,
-                resumeCursor: session.resumeCursor,
-              });
-            }
-          }).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("failed to persist Claude turn resume state", { cause }),
-            ),
-          );
+          // Save the new boundary before clients can checkpoint the turn.
+          yield* persistClaudeResumeCursor(source, canonicalEvent.threadId);
         }
+      } else if (canonicalEvent.type === "thread.started" && source.provider === "claudeAgent") {
+        yield* persistClaudeResumeCursor(source, canonicalEvent.threadId);
       } else if (canonicalEvent.type === "session.exited") {
         yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
       }

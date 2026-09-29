@@ -6243,20 +6243,72 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      const sessionResumeCursor = session.resumeCursor as {
-        threadId?: string;
-        resume?: string;
-        turnCount?: number;
-      };
-      assert.equal(sessionResumeCursor.threadId, THREAD_ID);
-      assert.equal(typeof sessionResumeCursor.resume, "string");
-      assert.equal(sessionResumeCursor.turnCount, 0);
+      const generatedSessionId = createInput?.options.sessionId ?? "";
       assert.match(
-        sessionResumeCursor.resume ?? "",
+        generatedSessionId,
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
       );
       assert.equal(createInput?.options.resume, undefined);
-      assert.equal(createInput?.options.sessionId, sessionResumeCursor.resume);
+      // The CLI has not written this session yet, so it is not resumable.
+      assert.deepEqual(session.resumeCursor, { threadId: THREAD_ID, turnCount: 0 });
+
+      const threadStartedFiber = yield* Stream.take(
+        adapter.streamEvents.pipe(Stream.filter((event) => event.type === "thread.started")),
+        1,
+      ).pipe(Stream.runDrain, Effect.forkChild);
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        apiKeySource: "none",
+        claude_code_version: "test",
+        cwd: "/tmp/claude-adapter-test",
+        tools: [],
+        mcp_servers: [],
+        model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+        permissionMode: "bypassPermissions",
+        slash_commands: [],
+        output_style: "default",
+        skills: [],
+        plugins: [],
+        session_id: generatedSessionId,
+        uuid: "fresh-init",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(threadStartedFiber);
+
+      const cursor = (yield* adapter.listSessions())[0]?.resumeCursor as
+        | { readonly resume?: string }
+        | undefined;
+      assert.equal(cursor?.resume, generatedSessionId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("starts fresh when the first session stopped before Claude confirmed it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const first = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const abandonedSessionId = harness.getLastCreateQueryInput()?.options.sessionId;
+      yield* adapter.stopSession(THREAD_ID);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        resumeCursor: first.resumeCursor,
+      });
+
+      const restarted = harness.getLastCreateQueryInput();
+      assert.equal(restarted?.options.resume, undefined);
+      assert.notEqual(restarted?.options.sessionId, undefined);
+      assert.notEqual(restarted?.options.sessionId, abandonedSessionId);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

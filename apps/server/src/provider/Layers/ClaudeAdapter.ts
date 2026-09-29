@@ -4231,8 +4231,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
+      // A fresh session's app-generated id stays out of the resume cursor until
+      // the CLI reports it (ensureThreadId). A first turn stopped before then
+      // leaves no transcript, and resuming that id fails every later turn.
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
-      const sessionId = existingResumeSessionId ?? newSessionId;
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -4812,7 +4814,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(threadId ? { threadId } : {}),
         resumeCursor: {
           ...(threadId ? { threadId } : {}),
-          ...(sessionId ? { resume: sessionId } : {}),
+          ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
           turnCount: resumeState?.turnCount ?? 0,
           ...(resumeState?.turnStartMessageIds
@@ -4836,7 +4838,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
         currentEffort: effectiveEffort ?? undefined,
-        resumeSessionId: sessionId,
+        resumeSessionId: existingResumeSessionId,
         pendingApprovals,
         pendingUserInputs,
         turns: [],
